@@ -1,3 +1,4 @@
+// Decodes IR signal to a digit corresponding to an output in the given IR Remote (38 kHz)
 int decodeHexCode(unsigned long code) {
   switch (code) {
     case 3860463360:

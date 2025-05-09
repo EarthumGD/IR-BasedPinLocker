@@ -24,6 +24,7 @@ bool accessGranted = false;
 
 bool isSensed = false;
 bool isReset = false;
+bool isAccessGrantedPrinted = true;
 int tries = 0;
 
 void setup() {
@@ -57,14 +58,83 @@ void setup() {
 }
 
 void loop() {
+  // Checks if it's unlocked; otherwise, it's locked
   if(accessGranted) {
-    lcd.setCursor(0, 1);
-    lcd.print("Welcome user!");
+    if(isAccessGrantedPrinted) {
+      lcd.clear();
+      lcd.print("Access granted!");
+      lcd.setCursor(0, 1);
+      lcd.print("Welcome user!");
+      isAccessGrantedPrinted = false;
+    }
 
+    // Gets distance from ultrasonic sensor
     float distance = getDistance();
     Serial.println(distance);
 
-    if(distance <= 2.00) {
+    // Mainly used for resetting PIN number
+    if(IrReceiver.decode()) {
+      hexCode = IrReceiver.decodedIRData.decodedRawData;
+
+      // Checks for long press
+      if (hexCode != 0) {
+        int digit = decodeHexCode(hexCode);
+
+        // If input is * --> Reset mode
+        if(digit == -1 && !isReset) {
+          isReset = true;
+          inputIndex = 0;
+          lcd.clear();
+          lcd.print("New 6-digit PIN:");
+        }
+
+        // Checks if the system is in reset mode
+        if(isReset) {
+          // If input is # --> Cancel reset
+          if(digit == -2) {
+            lcd.clear();
+            lcd.print("Canceled...");
+            inputIndex = 0;
+            isReset = false;
+            isAccessGrantedPrinted = true;
+            delay(2000);
+          }
+
+          // If input is < (LEFT) --> Backspace
+          if(digit == -5 && inputIndex > 0) {
+            inputIndex--;
+            lcd.setCursor(inputIndex, 1);
+            lcd.print(" ");
+            newPassword[inputIndex] = 0;
+          }
+
+          // Valid input
+          if(digit >= 0 && digit <= 9) {
+            if(inputIndex < passwordLength) {
+              lcd.setCursor(inputIndex, 1);
+              lcd.print("*");
+              newPassword[inputIndex++] = hexCode;
+            }
+          }
+
+          // If input is OK --> Confirm
+          if(digit == -7 && inputIndex == passwordLength) {
+            lcd.clear();
+            lcd.print("New Password!");
+            changePassword();
+            inputIndex = 0;
+            isReset = false;
+            isAccessGrantedPrinted = true;
+            delay(2000);
+          }
+        }
+      }
+
+      IrReceiver.resume();
+    }
+
+    // Stops if the system is in reset mode
+    if(!isReset && (distance > 0 && distance <= 2.00)) {
       digitalWrite(buzzerPin, HIGH);
       lcd.clear();
       lcd.print("Locked");
@@ -76,117 +146,91 @@ void loop() {
       lcd.print("6-digit PIN:");
     }
 
-    delay(75);
+    delay(50);
   } else {
     digitalWrite(onPin, LOW);
     digitalWrite(offPin, HIGH);
 
+    // Mainly for pin input
     if (IrReceiver.decode()) {
       hexCode = IrReceiver.decodedIRData.decodedRawData;
 
-      if(decodeHexCode(hexCode) == -1) {
-        isReset = true;
-        inputIndex = 0;
-        lcd.clear();
-        lcd.print("New 6-digit PIN:");
-      }
-
+      // Checks for long press
       if (hexCode != 0) {
         int digit = decodeHexCode(hexCode);
 
-        if(isReset) {
-          if(digit == -2) {
-            lcd.clear();
-            lcd.print("Canceled...");
-            inputIndex = 0;
-            isReset = false;
-            delay(2000);
-            lcd.clear();
-            lcd.print("6-digit PIN:");
-          }
+        // If input is < (LEFT) --> Backspace
+        if(digit == -5 && inputIndex > 0) {
+          inputIndex--;
+          lcd.setCursor(inputIndex, 1);
+          lcd.print(" ");
+          input[inputIndex] = 0;
+        }
 
-          if(digit == -5 && inputIndex > 0) {
-            inputIndex--;
+        // Valid input
+        if(digit >= 0 && digit <= 9) {
+          if(inputIndex < passwordLength) {
             lcd.setCursor(inputIndex, 1);
-            lcd.print(" ");
-            newPassword[inputIndex] = 0;
+            lcd.print("*");
+            input[inputIndex++] = hexCode;
           }
+        }
 
-          if(digit >= 0 && digit <= 9) {
-            if(inputIndex < passwordLength) {
-              lcd.setCursor(inputIndex, 1);
-              lcd.print(digit);
-              newPassword[inputIndex++] = hexCode;
-            }
-          }
-
-          if(digit == -7 && inputIndex == passwordLength) {
+        // If input is OK --> Confirm
+        if(digit == -7 && inputIndex == passwordLength) {
+          // Checks if password is correct
+          if(checkPassword()) {
             lcd.clear();
-            lcd.print("New Password!");
-            changePassword();
-            inputIndex = 0;
-            isReset = false;
+            lcd.print("Access granted!");
+            digitalWrite(onPin, HIGH);
+            digitalWrite(offPin, LOW);
+            accessGranted = true;
             tries = 0;
             delay(2000);
+            unlock();
+          } else {
+            tries++;
+            lcd.clear();
+            lcd.print("Access denied...");
+            digitalWrite(denyPin, HIGH);
+            digitalWrite(buzzerPin, HIGH);
+            delay(2000);
             lcd.clear();
             lcd.print("6-digit PIN:");
-          }
-        } else {
-          if(digit == -5 && inputIndex > 0) {
-            inputIndex--;
-            lcd.setCursor(inputIndex, 1);
-            lcd.print(" ");
-            input[inputIndex] = 0;
+            digitalWrite(denyPin, LOW);
+            digitalWrite(buzzerPin, LOW);
           }
 
-          if(digit >= 0 && digit <= 9) {
-            if(inputIndex < passwordLength) {
-              lcd.setCursor(inputIndex, 1);
-              lcd.print(digit);
-              input[inputIndex++] = hexCode;
-            }
-          }
-
-          if(digit == -7 && inputIndex == passwordLength) {
-            if(checkPassword()) {
-              lcd.clear();
-              lcd.print("Access granted!");
-              digitalWrite(onPin, HIGH);
-              digitalWrite(offPin, LOW);
-              accessGranted = true;
-              tries = 0;
-              digitalWrite(buzzerPin, HIGH);
-              delay(2000);
-              digitalWrite(buzzerPin, LOW);
-              unlock();
-            } else {
-              tries++;
-              lcd.clear();
-              lcd.print("Access denied...");
-              digitalWrite(denyPin, HIGH);
-              delay(2000);
-              lcd.clear();
-              lcd.print("6-digit PIN:");
-              digitalWrite(denyPin, LOW);
-            }
-
-            inputIndex = 0;
-          }
+          inputIndex = 0;
         }
       }
 
       IrReceiver.resume();
     }
 
+    // Checks if user tries three times
+    // Waits for 60 seconds
+    // Buzzer is on for the duration
     if(tries == 3) {
       tries = 0;
-      lcd.clear();
-      lcd.print("Retry after:");
-      lcd.setCursor(0, 1);
-      lcd.print("1 minute");
-      delay(60000);
+      digitalWrite(buzzerPin, HIGH);
+      for(int i = 60; i > 0; i--) { 
+        lcd.clear();
+        lcd.print("Retry after:");
+        if(i < 10) {
+          lcd.setCursor(0, 1);
+          lcd.print("0");
+          lcd.setCursor(1, 1);
+          lcd.print(i);
+        } else {
+          lcd.setCursor(0, 1);
+          lcd.print(i);
+        }
+        delay(1000);
+      }
       lcd.clear();
       lcd.print("6-digit PIN:");
+      digitalWrite(buzzerPin, LOW);
     }
   }
 }
